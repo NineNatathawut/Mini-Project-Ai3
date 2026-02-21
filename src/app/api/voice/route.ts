@@ -1,35 +1,43 @@
-import { NextResponse } from "next/server";
-import products from "@/data/products.json";
-
-export const runtime = "nodejs";
+import { NextResponse } from 'next/server';
+// 1. Import ข้อมูลดวงดาว
+import solarSystemData from '@/data/solar_system.json'; 
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
-    const transcript = (text || "").trim();
+    const { transcript } = await req.json();
 
     if (!transcript) {
-      return NextResponse.json({ error: "ไม่มีข้อความจากการพูด" }, { status: 400 });
+      return NextResponse.json({ error: 'No transcript' }, { status: 400 });
     }
 
-    const n8nUrl = process.env.N8N_WEBHOOK_URL;
-    if (!n8nUrl) {
-      return NextResponse.json({ error: "ยังไม่ได้ตั้งค่า N8N_WEBHOOK_URL" }, { status: 500 });
-    }
+    // -------------------------------------------------------
+    // แก้ตรงนี้! เอา URL ของคุณมาใส่ตรงๆ เลย (อย่าลืมเครื่องหมายฟันหนู '...')
+    const n8nUrl = 'https://ninenatathawut.app.n8n.cloud/webhook/it-shop-voice';
+    // -------------------------------------------------------
 
-    const resp = await fetch(n8nUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    console.log('Sending to n8n:', n8nUrl); // เพิ่มบรรทัดนี้ไว้เช็คใน Terminal
+
+    const response = await fetch(n8nUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        transcript,
-        products,
-        lang: "th",
+        transcript: transcript,
+        items: solarSystemData 
       }),
     });
 
-    const data = await resp.json().catch(() => ({}));
-    return NextResponse.json(data, { status: resp.ok ? 200 : resp.status });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    if (!response.ok) {
+       // เพิ่มการเช็ค Error เพื่อดูว่า n8n ตอบกลับมาว่าอะไร
+       const errorText = await response.text();
+       console.error('n8n Error:', errorText);
+       throw new Error(`n8n failed: ${response.status} ${errorText}`);
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data);
+
+  } catch (error) {
+    console.error('Server Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

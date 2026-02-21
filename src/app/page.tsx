@@ -1,117 +1,155 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
-
-type ApiResult = {
-  transcript?: string;
-  answer?: string;
-  matches?: Array<any>;
-  error?: string;
-};
+import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [isListening, setIsListening] = useState(false);
-  const [status, setStatus] = useState("พร้อมพูด");
-  const [result, setResult] = useState<ApiResult>({});
-
-  const recognitionRef = useRef<any>(null);
+  const [transcript, setTranscript] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [items, setItems] = useState<any[]>([]);
+  const [recognition, setRecognition] = useState<any>(null);
 
   useEffect(() => {
-    // รองรับ Chrome: webkitSpeechRecognition
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    // เช็คว่า Browser รองรับ Speech Recognition ไหม
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+      const recog = new SpeechRecognition();
+      
+      recog.lang = 'th-TH'; // ภาษาไทย
+      recog.continuous = false; // ฟังประโยคเดียวจบ
+      recog.interimResults = false; // ไม่เอาข้อความระหว่างพูด (เอาตอนจบทีเดียว)
 
-    if (!SpeechRecognition) {
-      setStatus("เบราว์เซอร์นี้ไม่รองรับ Web Speech API (แนะนำ Chrome เท่านั้น)");
-      return;
+      recog.onstart = () => {
+        setIsListening(true);
+        setAnswer("กำลังฟัง... พูดได้เลยครับ");
+      };
+      
+      recog.onresult = (event: any) => {
+        const text = event.results[0][0].transcript;
+        console.log("ได้ยินว่า:", text); // Debug ดูใน Console
+        setTranscript(text);
+        
+        // หยุดฟังแล้วส่งข้อมูลทันที
+        setIsListening(false); 
+        handleVoiceSearch(text);
+      };
+
+      recog.onerror = (event: any) => {
+        console.error("Speech Error:", event.error);
+        setIsListening(false);
+        setAnswer("เกิดข้อผิดพลาดในการรับเสียง: " + event.error);
+      };
+
+      recog.onend = () => {
+        setIsListening(false);
+      };
+
+      setRecognition(recog);
+    } else {
+      setAnswer("Browser ของคุณไม่รองรับฟีเจอร์นี้ครับ");
     }
-
-    const rec = new SpeechRecognition();
-    rec.lang = "th-TH";
-    rec.interimResults = false; // เอาเฉพาะผลสุดท้าย
-    rec.maxAlternatives = 1;
-
-    rec.onstart = () => {
-      setIsListening(true);
-      setStatus("กำลังฟัง... พูดคำถามได้เลย");
-    };
-
-    rec.onend = () => {
-      setIsListening(false);
-      setStatus("หยุดฟังแล้ว");
-    };
-
-    rec.onerror = (e: any) => {
-      setIsListening(false);
-      setStatus(`เกิดข้อผิดพลาด: ${e?.error || "unknown"}`);
-      setResult({ error: e?.error || "speech error" });
-    };
-
-    rec.onresult = async (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript || "";
-      setStatus("ได้ข้อความแล้ว กำลังส่งไปถามระบบ...");
-      setResult({ transcript });
-
-      // ส่ง transcript ไป server (ไม่ส่งไฟล์เสียงแล้ว)
-      const resp = await fetch("/api/voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: transcript }),
-      });
-
-      const data: ApiResult = await resp.json();
-      setResult(data);
-      setStatus(data.error ? "เกิดข้อผิดพลาด" : "เสร็จสิ้น");
-    };
-
-    recognitionRef.current = rec;
   }, []);
 
-  function start() {
-    setResult({});
-    try {
-      recognitionRef.current?.start();
-    } catch {
-      // บางครั้ง start ซ้ำเร็วเกิน จะ throw
-    }
-  }
+  const handleVoiceSearch = async (text: string) => {
+    setAnswer("กำลังติดต่อ n8n AI...");
+    setItems([]); // เคลียร์ข้อมูลเก่า
 
-  function stop() {
-    recognitionRef.current?.stop();
-  }
+    try {
+      const res = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: text }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server Error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      console.log("API ตอบกลับ:", data); // Debug ดูผลลัพธ์
+
+      if (data.error) {
+        setAnswer("Error: " + data.error);
+      } else {
+        setAnswer(data.answer);
+        if (data.matches) setItems(data.matches);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAnswer("เชื่อมต่อไม่ได้: " + err.message);
+    }
+  };
+
+  const startListening = (e: any) => {
+    // *** สำคัญมาก: บรรทัดนี้ป้องกันหน้าเว็บรีโหลด ***
+    e.preventDefault(); 
+
+    if (recognition) {
+      setTranscript("");
+      setAnswer("");
+      setItems([]);
+      try {
+        recognition.start();
+      } catch (error) {
+        console.log("Mic already active");
+      }
+    }
+  };
 
   return (
-    <main className="min-h-screen p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold">IT Shop Voice Q&A (Web Speech)</h1>
-      <p className="text-sm opacity-80 mt-2">
-        กดเริ่มแล้วพูด เช่น “มี SSD 1TB ไหม ราคาเท่าไหร่”
-      </p>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-10 font-sans">
+      <h1 className="text-3xl font-bold mb-8 text-blue-400">🪐 สารานุกรมอวกาศ AI</h1>
+      
+      <div className="bg-gray-800 p-6 rounded-xl shadow-2xl w-full max-w-lg border border-gray-700">
+        
+        <form className="flex justify-center mb-6">
+          <button
+            // ใส่ type="button" เพื่อความชัวร์ว่าไม่ submit form
+            type="button" 
+            onClick={startListening}
+            disabled={isListening}
+            className={`px-8 py-4 rounded-full font-bold text-lg shadow-lg transition-all transform hover:scale-105 ${
+              isListening 
+                ? 'bg-red-500 animate-pulse cursor-not-allowed' 
+                : 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700'
+            }`}
+          >
+            {isListening ? 'กำลังฟังเสียง...' : '🎙️ กดเพื่อถาม'}
+          </button>
+        </form>
 
-      <div className="mt-6 flex gap-3">
-        {!isListening ? (
-          <button className="px-4 py-2 rounded bg-black text-white" onClick={start}>
-            เริ่มพูด
-          </button>
-        ) : (
-          <button className="px-4 py-2 rounded bg-red-600 text-white" onClick={stop}>
-            หยุด
-          </button>
+        <div className="mb-6 space-y-2">
+          <label className="text-gray-400 text-sm">คุณถามว่า:</label>
+          <div className="w-full p-4 bg-gray-700 rounded-lg min-h-[60px] border border-gray-600 text-lg">
+            {transcript || <span className="text-gray-500 italic">...รอรับคำสั่ง...</span>}
+          </div>
+        </div>
+
+        <div className="mb-4 space-y-2">
+          <label className="text-gray-400 text-sm">AI ตอบว่า:</label>
+          <div className="w-full p-4 bg-indigo-900/50 rounded-lg min-h-[100px] border border-indigo-500/30 whitespace-pre-line leading-relaxed">
+            {answer || <span className="text-gray-500 italic">- คำตอบจะปรากฏที่นี่ -</span>}
+          </div>
+        </div>
+
+        {/* แสดงการ์ดข้อมูลดวงดาว */}
+        {items.length > 0 && (
+          <div className="mt-6 border-t border-gray-700 pt-4 animate-fade-in">
+            <h3 className="font-semibold text-blue-300 mb-3">✨ ข้อมูลที่พบ:</h3>
+            <div className="space-y-3">
+              {items.map((item: any, i) => (
+                <div key={i} className="p-3 bg-gray-700/50 border border-gray-600 rounded hover:bg-gray-700 transition">
+                  <div className="flex justify-between items-center">
+                    <strong className="text-lg text-white">{item.name}</strong>
+                    <span className="text-xs bg-blue-900 text-blue-200 px-2 py-1 rounded">{item.type}</span>
+                  </div>
+                  <p className="text-gray-300 mt-2 text-sm">{item.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
-        <div className="px-3 py-2 rounded border text-sm">{status}</div>
       </div>
-
-      <section className="mt-8 space-y-4">
-        <div className="p-4 rounded border">
-          <div className="font-semibold">ข้อความที่ถอดเสียง</div>
-          <div className="mt-2 text-sm">{result.transcript ?? "-"}</div>
-        </div>
-
-        <div className="p-4 rounded border">
-          <div className="font-semibold">คำตอบ</div>
-          <div className="mt-2 text-sm">{result.answer ?? "-"}</div>
-          {result.error && <div className="mt-2 text-sm text-red-600">{result.error}</div>}
-        </div>
-      </section>
-    </main>
+    </div>
   );
 }
